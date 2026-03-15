@@ -1,122 +1,223 @@
 <!DOCTYPE html>
 <html lang="en-us">
-  <head>
-    <meta charset="utf-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Unity WebGL Player | TaakmeesterController</title>
-    <link rel="shortcut icon" href="TemplateData/favicon.ico">
-    <link rel="stylesheet" href="TemplateData/style.css">
-  </head>
-  <body>
-    <div id="unity-container" class="unity-desktop">
-      <canvas id="unity-canvas" width=960 height=540 tabindex="-1"></canvas>
-      <div id="unity-loading-bar">
-        <div id="unity-logo"></div>
-        <div id="unity-progress-bar-empty">
-          <div id="unity-progress-bar-full"></div>
-        </div>
-      </div>
-      <div id="unity-warning"> </div>
-      <div id="unity-footer">
-        <div id="unity-webgl-logo"></div>
-        <div id="unity-fullscreen-button"></div>
-        <div id="unity-build-title">TaakmeesterController</div>
-      </div>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <!--
+    viewport-fit=cover: lets content extend into iPhone notch/safe areas.
+    user-scalable=no:   disables pinch-zoom so Unity gets all touch events.
+  -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>TaakmeesterController</title>
+
+  <style>
+    /* ── Reset ─────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /*
+      Use the "large" viewport unit (lvh) so the layout fills the full
+      browser chrome height on mobile, then fall back to 100vh.
+      overflow:hidden stops iOS rubber-band scrolling from showing a gap.
+    */
+    html, body {
+      width: 100%;
+      height: 100%;
+      height: 100lvh; /* modern mobile: ignores collapsing address bar */
+      background: #000;
+      overflow: hidden;
+      touch-action: none;      /* Unity handles its own touch events */
+      -webkit-tap-highlight-color: transparent;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+
+    /* ── Canvas wrapper ─────────────────────────────────────────────────
+       The wrapper fills the full viewport. The canvas inside is sized
+       by JS to the largest rectangle that fits while keeping the Unity
+       build's original aspect ratio — centered with black bars if needed.
+       Remove the JS resize call below if you'd rather have Unity's
+       Canvas Scaler handle everything (full bleed, no bars).
+    ─────────────────────────────────────────────────────────────────── */
+    #unity-wrapper {
+      position: fixed;
+      inset: 0;
+      /* Respect iPhone notch / Android cutout */
+      padding: env(safe-area-inset-top)
+               env(safe-area-inset-right)
+               env(safe-area-inset-bottom)
+               env(safe-area-inset-left);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #unity-canvas {
+      /* Start invisible; JS makes it visible after the first frame. */
+      display: block;
+      /* These are overridden by the JS resizer on every resize event. */
+      width: 100%;
+      height: 100%;
+      background: #000;
+    }
+
+    /* ── Loading overlay ────────────────────────────────────────────────
+       Covers the canvas while Unity boots. Fades out on first frame.
+    ─────────────────────────────────────────────────────────────────── */
+    #unity-loading-overlay {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 24px;
+      background: #111;
+      color: #fff;
+      font-family: system-ui, -apple-system, sans-serif;
+      transition: opacity 0.5s ease;
+      z-index: 10;
+    }
+
+    #unity-loading-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #unity-product-name {
+      font-size: clamp(1rem, 4vw, 1.6rem);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      opacity: 0.85;
+    }
+
+    /* Progress track */
+    #unity-progress-track {
+      width: min(280px, 60vw);
+      height: 6px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    #unity-progress-bar {
+      height: 100%;
+      width: 0%;
+      background: #fff;
+      border-radius: 999px;
+      transition: width 0.2s ease;
+    }
+
+    #unity-progress-label {
+      font-size: 0.75rem;
+      opacity: 0.5;
+      letter-spacing: 0.1em;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Canvas wrapper -->
+  <div id="unity-wrapper">
+    <canvas id="unity-canvas"></canvas>
+  </div>
+
+  <!-- Loading screen -->
+  <div id="unity-loading-overlay">
+    <div id="unity-product-name">TaakmeesterController</div>
+    <div id="unity-progress-track">
+      <div id="unity-progress-bar"></div>
     </div>
-    <script>
+    <div id="unity-progress-label">LOADING…</div>
+  </div>
 
-      var container = document.querySelector("#unity-container");
-      var canvas = document.querySelector("#unity-canvas");
-      var loadingBar = document.querySelector("#unity-loading-bar");
-      var progressBarFull = document.querySelector("#unity-progress-bar-full");
-      var fullscreenButton = document.querySelector("#unity-fullscreen-button");
-      var warningBanner = document.querySelector("#unity-warning");
+  <!-- Unity loader (path injected by Unity build pipeline) -->
+  <script src=""></script>
 
-      // Shows a temporary message banner/ribbon for a few seconds, or
-      // a permanent error message on top of the canvas if type=='error'.
-      // If type=='warning', a yellow highlight color is used.
-      // Modify or remove this function to customize the visually presented
-      // way that non-critical warnings and error messages are presented to the
-      // user.
-      function unityShowBanner(msg, type) {
-        function updateBannerVisibility() {
-          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
-        }
-        var div = document.createElement('div');
-        div.innerHTML = msg;
-        warningBanner.appendChild(div);
-        if (type == 'error') div.style = 'background: red; padding: 10px;';
-        else {
-          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
-          setTimeout(function() {
-            warningBanner.removeChild(div);
-            updateBannerVisibility();
-          }, 5000);
-        }
-        updateBannerVisibility();
-      }
+  <script>
+    'use strict';
 
-      var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/TaskmasterController_webgl.loader.js";
-      var config = {
-        dataUrl: buildUrl + "/TaskmasterController_webgl.data",
-        frameworkUrl: buildUrl + "/TaskmasterController_webgl.framework.js",
-        codeUrl: buildUrl + "/TaskmasterController_webgl.wasm",
-        streamingAssetsUrl: "StreamingAssets",
-        companyName: "DefaultCompany",
-        productName: "TaakmeesterController",
-        productVersion: "1.0",
-        showBanner: unityShowBanner,
-      };
+    // ── Config ────────────────────────────────────────────────────────────
+    var buildUrl = "Build";
 
-      // By default, Unity keeps WebGL canvas render target size matched with
-      // the DOM size of the canvas element (scaled by window.devicePixelRatio)
-      // Set this to false if you want to decouple this synchronization from
-      // happening inside the engine, and you would instead like to size up
-      // the canvas DOM size and WebGL render target sizes yourself.
-      // config.matchWebGLToCanvasSize = false;
+    var config = {
+      dataUrl:             buildUrl + "/TaskmasterController_webgl.data",
+      frameworkUrl:        buildUrl + "/TaskmasterController_webgl.framework.js",
+      codeUrl:             buildUrl + "/TaskmasterController_webgl.wasm",
+      streamingAssetsUrl:  "StreamingAssets",
+      companyName:         "DefaultCompany",
+      productName:         "TaakmeesterController",
+      productVersion:      "1.0",
+    };
 
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        // Mobile device style: fill the whole browser client area with the game canvas:
+    // ── Elements ──────────────────────────────────────────────────────────
+    var canvas  = document.getElementById("unity-canvas");
+    var overlay = document.getElementById("unity-loading-overlay");
+    var bar     = document.getElementById("unity-progress-bar");
+    var label   = document.getElementById("unity-progress-label");
 
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-        container.className = "unity-mobile";
-        canvas.className = "unity-mobile";
+    // ── Canvas resizer ────────────────────────────────────────────────────
+    //
+    // Strategy: fill the wrapper entirely (full bleed).
+    // Unity's Canvas Scaler handles the actual UI layout.
+    //
+    // If you prefer letterboxed/pillarboxed rendering to preserve a fixed
+    // aspect ratio, replace the body of resizeCanvas() with the commented
+    // "Letterbox / pillarbox" block below.
+    //
+    function resizeCanvas() {
+      var wrapper = document.getElementById("unity-wrapper");
+      var w = wrapper.clientWidth;
+      var h = wrapper.clientHeight;
 
-        // To lower canvas resolution on mobile devices to gain some
-        // performance, uncomment the following line:
-        // config.devicePixelRatio = 1;
+      // ── Full-bleed (recommended — let Unity Canvas Scaler handle UI) ──
+      canvas.style.width  = w + "px";
+      canvas.style.height = h + "px";
 
-
+      /*
+      // ── Letterbox / pillarbox (fixed aspect ratio) ────────────────────
+      var TARGET_RATIO = 960 / 540;
+      var windowRatio  = w / h;
+      var cw, ch;
+      if (windowRatio > TARGET_RATIO) {
+        // Window is wider than needed — pillarbox
+        ch = h;
+        cw = Math.round(h * TARGET_RATIO);
       } else {
-        // Desktop style: Render the game canvas in a window that can be maximized to fullscreen:
-
-        canvas.style.width = "960px";
-        canvas.style.height = "540px";
+        // Window is taller than needed — letterbox
+        cw = w;
+        ch = Math.round(w / TARGET_RATIO);
       }
+      canvas.style.width  = cw + "px";
+      canvas.style.height = ch + "px";
+      */
+    }
 
-      loadingBar.style.display = "block";
+    // Run once immediately and again on every resize / orientation change.
+    resizeCanvas();
+    window.addEventListener("resize",            resizeCanvas);
+    window.addEventListener("orientationchange", resizeCanvas);
 
-      var script = document.createElement("script");
-      script.src = loaderUrl;
-      script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
-          progressBarFull.style.width = 100 * progress + "%";
-              }).then((unityInstance) => {
-                loadingBar.style.display = "none";
-                fullscreenButton.onclick = () => {
-                  unityInstance.SetFullscreen(1);
-                };
-              }).catch((message) => {
-                alert(message);
-              });
-            };
+    // ── Boot Unity ────────────────────────────────────────────────────────
+    createUnityInstance(canvas, config, function onProgress(progress) {
+      bar.style.width = (progress * 100) + "%";
+      if (progress >= 1) {
+        label.textContent = "STARTING…";
+      }
+    })
+    .then(function onReady(unityInstance) {
+      // Fade out and remove the loading overlay
+      overlay.classList.add("hidden");
+      overlay.addEventListener("transitionend", function() {
+        overlay.remove();
+      }, { once: true });
+    })
+    .catch(function onError(message) {
+      label.textContent = "ERROR";
+      console.error("Unity WebGL failed to start:", message);
+      alert("Failed to start: " + message);
+    });
+  </script>
 
-      document.body.appendChild(script);
-
-    </script>
-  </body>
+</body>
 </html>
